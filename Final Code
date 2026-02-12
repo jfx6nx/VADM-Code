@@ -1,1 +1,324 @@
-//Final code to be implemented here
+#include <ArrayList.h>
+
+// General
+#define BUTTON_PRESS_DEBOUNCE 50
+// 0
+#define BLINK_0_SPEED1 300
+// 0 or 1
+#define BLINK_0_SPEED2 700
+// 1
+#define FREQ_ADJUST_SPEED 1
+#define GAP_MULTIPLIER 60
+#define INITIAL_FREQ_ADJUST 5
+// 1 or 3
+#define MAX_PLAY_RECORD_WAIT_MS 5000
+// 2
+#define TRILL_SPEED 100
+#define PLAY_TRILL_DELAY 250
+// 3
+#define SONG_LIMIT 100 // NoteCounter is a byte!
+// 4
+#define BETWEEN_FRAC 60 // No longer a frac
+#define NO_DRONE 500
+#define DEFAULT_SONG_SPEED 300
+
+#define NOTE_C4 262
+#define NOTE_CS4 139 // Actually CS3
+#define NOTE_D4 294
+#define NOTE_DS4 311
+#define NOTE_E4 330
+#define NOTE_F4 349
+#define NOTE_FS4 370
+#define NOTE_G4 392
+#define NOTE_GS4 415
+#define NOTE_A4 440
+#define NOTE_AS4 466
+#define NOTE_B4 494
+#define NOTE_C5 523
+
+
+ArrayList<byte> songNoteTypes;
+ArrayList<unsigned long> songNoteTimesMs;
+const byte dNotes[21] = {2,3,4,5,6,7,8,9,2,4,6,9,6,4,2,6,9,6,2,3,2};
+
+const byte ledPin[10] = {14, 15, 21, 19, 29, 28, 26, 27, 22, 23};
+const int notes[11] = {0, 0, NOTE_C4, NOTE_D4, NOTE_E4, NOTE_F4, NOTE_G4, NOTE_A4, NOTE_B4, NOTE_C5, 0};
+const byte buttonPin[10] = {42, 41, 53, 36, 50, 45, 37, 46, 49, 38};
+
+bool buttonState[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+bool buttonLastState[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+unsigned long buttonLastPress[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+byte buttonPressed = 10;
+
+byte lastMode = 0;
+byte mode = 0;
+unsigned long lastPress = 0;
+
+// Mode 0 State Vars
+unsigned long last0Blink = 0;
+bool strobeMode = 0;
+byte strobeCounter = 2;
+
+// Mode 1 State Vars
+unsigned long lastFreqAdjust = 0;
+byte freqAdjust = INITIAL_FREQ_ADJUST;
+byte buttonPlaying = 10;
+bool restTone = 0;
+bool blinkOn = 0;
+
+// Mode 2 State Vars
+unsigned long lastTrill = 0;
+byte trillCount = 0;
+
+// Mode 3 State Vars
+bool songRecorded = 0;
+
+// Mode 4 State Vars
+unsigned int notBetweenSpeed = 0;
+unsigned long lastPlayStep = 0;
+byte noteCounter = 0;
+byte betweenNotes = 0;
+bool playTwice = 0;
+
+
+void setup() {
+  Serial.begin(9600);
+  for (byte i = 0; i < 10; i++) {
+    pinMode(buttonPin[i], INPUT_PULLUP);
+    pinMode(ledPin[i], OUTPUT);
+    digitalWrite(ledPin[i], HIGH);
+  }
+  delay(2000);
+  for (byte i = 0; i < 10; i++) {
+    digitalWrite(ledPin[i], LOW);
+  }
+}
+
+void loop() {
+  if (millis() - lastPress > BUTTON_PRESS_DEBOUNCE) {
+    for (byte i = 0; i < 10; i++) {
+      buttonState[i] = digitalRead(buttonPin[i]);
+      if (buttonState[i] == HIGH && buttonState[i] != buttonLastState[i]) {
+        buttonPressed = i;
+        buttonLastPress[i] = millis();
+        lastPress = buttonLastPress[i];
+        switch (i) {
+          case 0:
+            songNoteTypes.clear();
+            songNoteTimesMs.clear();
+            buttonPlaying = 10;
+            lastMode = 3;
+            noTone(9);
+            mode = 2;
+          break;
+          case 1:
+            noteCounter = 0;
+            betweenNotes = 0;
+            lastMode = 4;
+            noTone(9);
+            mode = 2;
+          break;
+          default:
+            switch (mode) {
+              case 0:
+                lastMode = mode;
+                mode = 1;
+              break;
+              case 3:
+                songNoteTypes.add(buttonPressed);
+                songNoteTimesMs.add(millis());
+              break;
+              case 4:
+                if (playTwice) {
+                  lastMode = mode;
+                  mode = 1;
+                }
+                playTwice = !playTwice;
+              break;
+            }
+          break;
+        }
+      }
+      buttonLastState[i] = buttonState[i];
+    }
+
+  }
+  switch (mode) {
+    case 4:
+      if (songNoteTypes.size() == 0) {
+        songRecorded = 0;
+        unsigned long ts = 0;
+        for(byte i=0; i<sizeof(dNotes); i++) {
+          songNoteTypes.add(dNotes[i]);
+          songNoteTimesMs.add(ts);
+          ts+=DEFAULT_SONG_SPEED;
+        }
+      }
+      if (betweenNotes == 2 || betweenNotes == 3 & millis() - lastPlayStep > (noteCounter != 0 && songNoteTimesMs.get(noteCounter) == songNoteTimesMs.get(noteCounter - 1) ? BETWEEN_FRAC : 0)) {
+        noTone(9);
+        digitalWrite(ledPin[songNoteTypes.get(noteCounter)], LOW);
+        betweenNotes = (betweenNotes + 1) % 3;
+        if (betweenNotes == 0)
+          noteCounter++;
+        lastPlayStep = millis();
+      }
+      if (betweenNotes == 0 || betweenNotes == 1 & millis() - lastPlayStep > (noteCounter == 0 ? 500 : (songNoteTimesMs.get(noteCounter) - songNoteTimesMs.get(noteCounter - 1) - (songNoteTimesMs.get(noteCounter) == songNoteTimesMs.get(noteCounter - 1) ? BETWEEN_FRAC : 0)))) {
+        betweenNotes++;
+        if (betweenNotes == 2) {
+          noTone(9);
+        } else {
+          tone(9, notes[songNoteTypes.get(noteCounter)]);
+          digitalWrite(ledPin[songNoteTypes.get(noteCounter)], HIGH);
+        }
+        lastPlayStep = millis();
+      }
+
+      if (noteCounter == songNoteTypes.size())
+      {
+        noteCounter = 0;
+        betweenNotes = 0;
+        for (byte j = 0; j < 10; j++) {
+          digitalWrite(ledPin[j], LOW);
+        }
+        noTone(9);
+        strobeCounter = 0;
+        lastMode = 4;
+        mode = 0;
+        buttonPlaying = 10;
+      }
+    break;
+    case 2:
+      for (byte j = 0; j < 10; j++) {
+        digitalWrite(ledPin[j], HIGH);
+      }
+      if (millis() - lastTrill > TRILL_SPEED) {
+        switch(trillCount) {
+          case 0:
+            tone(9, notes[2]);
+            digitalWrite(ledPin[2], HIGH);
+          break;
+          case 1:
+            tone(9, notes[6]);
+            digitalWrite(ledPin[6], HIGH);
+          break;
+          default:
+            if (lastMode == 4) {
+              tone(9, notes[9]);
+              digitalWrite(ledPin[9], HIGH);
+            } else {
+              digitalWrite(ledPin[6], HIGH);
+            }
+          break;
+        }
+        trillCount++;
+        if (trillCount > 3) {
+          for (byte j = 0; j < 10; j++) {
+            digitalWrite(ledPin[j], LOW);
+          }
+          mode = lastMode;
+          lastMode = 2;
+          trillCount = 0;
+          noTone(9);
+          buttonPressed = 10;
+          if (mode == 4) {
+            delay(PLAY_TRILL_DELAY);
+          }
+        }
+        lastTrill = millis();
+      }
+    break;
+    case 0:
+      buttonPressed = 10;
+      if (millis() - last0Blink > (strobeMode == 0 ? BLINK_0_SPEED1 : BLINK_0_SPEED2)) {
+        for (byte j = 2; j < 10; j++) {
+          digitalWrite(ledPin[j], LOW);
+        }
+        digitalWrite(ledPin[0], HIGH);
+        digitalWrite(ledPin[1], HIGH);
+        if (strobeMode == 0) {
+          digitalWrite(ledPin[strobeCounter], HIGH);
+        } else {
+          for (byte i = 2; i < 10; i++)
+          {
+            digitalWrite(ledPin[i], HIGH);
+          }
+          digitalWrite(ledPin[0], strobeCounter % 2 == 0);
+          digitalWrite(ledPin[1], songRecorded ? (strobeCounter % 2 == 0) : LOW);
+        }
+        strobeCounter++;
+        if (strobeCounter > 9)
+        {
+          strobeCounter = 2;
+          strobeMode = !strobeMode;
+        }
+        last0Blink = millis();
+      }
+    break;
+    default:
+      if (buttonPressed > 1) {
+        if (mode == 3 && buttonPressed < 10) {
+          songRecorded = 1;
+        }
+        if (buttonPressed < 10 && buttonPlaying != buttonPressed) {
+          restTone = 0;
+          freqAdjust = INITIAL_FREQ_ADJUST;
+          buttonPlaying = buttonPressed;
+          for (byte j = 2; j < 10; j++) {
+            digitalWrite(ledPin[j], LOW);
+          }
+          digitalWrite(ledPin[buttonPlaying], HIGH);
+        } else if (buttonPressed < 10) {
+          noTone(9);
+          restTone = 1;
+          digitalWrite(ledPin[buttonPressed], LOW);
+        }
+        if (buttonPressed > 1 && millis() - lastFreqAdjust > FREQ_ADJUST_SPEED * (restTone ? GAP_MULTIPLIER : (buttonPressed < 10 ? 0 : 1))) {
+          if (buttonPressed < 10) {
+            restTone = 0;
+            freqAdjust = INITIAL_FREQ_ADJUST;
+            buttonPlaying = buttonPressed;
+            for (byte j = 2; j < 10; j++) {
+              digitalWrite(ledPin[j], LOW);
+            }
+          }
+          digitalWrite(ledPin[buttonPlaying], HIGH);
+          if (buttonPlaying < 10 && buttonPlaying > 1) {
+            tone(9, notes[buttonPlaying]-freqAdjust);
+          }
+          if (freqAdjust > 0) {
+            freqAdjust--;
+          }
+          lastFreqAdjust = millis();
+        }
+        if (millis() - last0Blink > BLINK_0_SPEED2) {
+          blinkOn = !blinkOn;
+          digitalWrite(ledPin[0], mode == 3 ? HIGH : blinkOn);
+          if (songRecorded)
+            digitalWrite(ledPin[1], blinkOn);
+          last0Blink = millis();
+        }
+        if (millis() - lastPress > MAX_PLAY_RECORD_WAIT_MS || songNoteTypes.size() > SONG_LIMIT) {
+          if (mode == 1) {
+            lastMode = 1;
+            mode = 0;
+          } else if (mode == 3) {
+            lastMode = 4;
+            mode = 2;
+          }
+          noTone(9);
+          buttonPlaying = 10;
+          if (songNoteTypes.size() > SONG_LIMIT) {
+            for (byte j = 0; j < 10; j++) {
+              digitalWrite(ledPin[j], LOW);
+            }
+            for(byte k=0; k<10; k++) {
+              digitalWrite(ledPin[1], k%2==0);
+              delay(100);
+            }
+          }
+        }
+      }
+    break;
+  }
+  buttonPressed = 10;
+}
