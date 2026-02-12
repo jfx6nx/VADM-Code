@@ -1,0 +1,1 @@
+VADM stands for the Virginia Discovery Museum, a children's museum located on the downtown mall of Charlottesville, VA. The 'Melody Maker' is the final product team members produced; it is a wall-mounted, interactive exhibit that allows users to play, record, and then play back 8 notes across a C-major range.
